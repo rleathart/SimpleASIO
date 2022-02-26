@@ -46,9 +46,8 @@ asio_device ASIODevice;
 
 // NOTE(robin): This is the actual audio callback. The ASIO hardware will call this periodically
 // and you should fill the hardware buffers before the next callback (otherwise you will have buffer underflow).
-asio_time* ASIOAudioCallback(asio_time* Time, s32 Index, s32 DoDirectProcess)
+asio_time* ASIOAudioCallback(asio_time* Time, s32 BufferIndex, s32 DoDirectProcess)
 {
-
   // NOTE(robin): Here we store the phase of 2 oscillators
   static f64 Phase[] = {0, 0};
   f64 PhaseDelta[] =
@@ -67,65 +66,26 @@ asio_time* ASIOAudioCallback(asio_time* Time, s32 Index, s32 DoDirectProcess)
         Phase[i] -= 1;
     }
 
-    f32 Samples[] =
+    f64 Samples[] =
     {
-      (f32)sin(2 * 3.1415926538 * Phase[0]),
-      (f32)sin(2 * 3.1415926538 * Phase[1]),
+      sin(2 * 3.1415926538 * Phase[0]),
+      sin(2 * 3.1415926538 * Phase[1]),
     };
 
     // NOTE(robin): Just output to the first 2 outputs since this is probably what
     // the speakers/headphones are plugged into
     for (u32 ChannelIndex = 0; ChannelIndex < 2; ChannelIndex++)
     {
-      void* OutputBuffer = ASIODevice.Outputs[ChannelIndex].Buffers[Index];
-      f32 Volume = 0.1f; // NOTE(robin): Turn it down a bit
-      f32 Sample = Volume * Samples[ChannelIndex]; // NOTE(robin): The floating point sample we want to write
-      asio_sample_format Format =
+      void* OutputBuffer = ASIODevice.Outputs[ChannelIndex].Buffers[BufferIndex];
+      f64 Volume = 0.1f; // NOTE(robin): Turn it down a bit
+      f64 Sample = Volume * Samples[ChannelIndex]; // NOTE(robin): The floating point sample we want to write
+      asio_sample_format HardwareFormat =
         ASIOGetSampleFormat(ASIODevice.Channels[ASIODevice.InputChannels + ChannelIndex].SampleType);
 
-      if (Format.DSD)
-        assert(!"DSD formats are not supported yet");
-      if (Format.IsBigEndian)
-        assert(!"Big endian formats are not supported yet");
+      asio_error Error = ASIOWriteSampleToHardwareBuffer(OutputBuffer, FrameIndex, Sample, HardwareFormat);
 
-      // NOTE(robin): Now we need to convert from 32-bit float (our format) to the native hardware format
-      if (Format.IsFloat)
-      {
-        if (Format.BytesPerSample == 4)
-          ((f32*)OutputBuffer)[FrameIndex] = Samples[ChannelIndex];
-        if (Format.BytesPerSample == 8)
-          ((f64*)OutputBuffer)[FrameIndex] = Samples[ChannelIndex];
-      }
-      else // NOTE(robin): Integer sample format
-      {
-        switch (Format.BytesPerSample)
-        {
-          case 2:
-          {
-            s16 S16_MAX = 0x7FFF;
-            s16* HardwareBuffer = (s16*)OutputBuffer;
-            HardwareBuffer[FrameIndex] = (s16)(S16_MAX * Sample);
-          } break;
-
-          case 3: // NOTE(robin): This one is a little more complicated because there is no native s24 type
-          {
-            u8* HardwareBuffer = &((u8*)OutputBuffer)[FrameIndex * 3];
-            s32 S24_MAX = (2 << 23) - 1;
-            s32 S32Sample = (s32)(S24_MAX * Sample);
-            u8* S32Bytes = (u8*)&S32Sample;
-            HardwareBuffer[0] = S32Bytes[0];
-            HardwareBuffer[1] = S32Bytes[1];
-            HardwareBuffer[2] = S32Bytes[2];
-          } break;
-
-          case 4:
-          {
-            s32 S32_MAX = 0x7FFFFFFF;
-            s32* HardwareBuffer = (s32*)OutputBuffer;
-            HardwareBuffer[FrameIndex] = (s32)(S32_MAX * Sample);
-          } break;
-        }
-      }
+      if (Error != ASIOErrorOK)
+        printf("Failed to convert to the hardware sample format\n");
     }
   }
 
@@ -155,6 +115,7 @@ void ASIOAudioCallbackOldStyle(s32 Index, s32 DoDirectProcess)
 void ASIOChangeSampleRate(f64 SampleRate)
 {
   // NOTE(robin): Code that is run when the sample rate changes goes here...
+  ASIODevice.SampleRate = SampleRate;
 }
 
 // NOTE(robin): The hardware will send us messages through this callback
@@ -201,7 +162,7 @@ int main(void)
   for (u32 i = 0; i < DriverCount; i++)
     wprintf(L"%d: %s\n", i, DriverNames[i]);
 
-  printf("Please choose a driver to use: ");
+  printf("\nPlease choose a driver to use: ");
   char Response = (char)getchar(); // NOTE(robin): Only supports up to 10 drivers
   int SelectedDriverIndex = atoi(&Response);
 
@@ -215,6 +176,8 @@ int main(void)
   // NOTE(robin): Now do the actual ASIO initialisation...
   // NOTE(robin): This is mostly all boilerplate initialisation code for ASIO
 
+  // NOTE(robin): This ASIODriver->VMT->MethodName(ASIODriver, ...) pattern is a result of
+  // calling a C++ API from C. You can think of this as the equivalent of ASIODriver->Init(0) in C++.
   ASIODriver->VMT->Init(ASIODriver, 0);
 
   // NOTE(robin): Get how many hardware channels we have
@@ -276,6 +239,11 @@ int main(void)
   ASIODevice.Inputs = &BufferInfos[0];              // NOTE(robin): Input buffers come first
   ASIODevice.Outputs = &BufferInfos[InputChannels]; // NOTE(robin): Outputs come after input buffers
   ASIODevice.Channels = ChannelInfos;
+
+  printf("Sample rate: %f\n", SampleRate);
+  printf("Input channels: %d\n", InputChannels);
+  printf("Output channels: %d\n", OutputChannels);
+  printf("Buffer size: %d\n", BufferSize);
 
   // NOTE(robin): Tell the hardware to start calling our callbacks
   ASIODriver->VMT->Start(ASIODriver);

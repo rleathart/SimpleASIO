@@ -278,8 +278,6 @@ void ASIOGetDriverInfo(u32 DriverCount,
   u32 ASIO_KEY_READ = (0x20000 | 0x1 | 0x8 | 0x10) & ~0x10000;
   u32 ASIO_REG_SZ = 1;
 
-  s32 Error = 0;
-
   void* ASIOKey = 0;
   RegOpenKeyExW(ASIO_HKEY_LOCAL_MACHINE, L"SOFTWARE\\ASIO", 0, ASIO_KEY_READ, &ASIOKey);
 
@@ -289,7 +287,7 @@ void ASIOGetDriverInfo(u32 DriverCount,
     u32 DataType = 0;
 
     DataSize = DriverNameMax * sizeof(wchar);
-    Error = RegEnumKeyExW(ASIOKey, DriverIndex, DriverNames[DriverIndex], &DataSize, 0, 0, 0, 0);
+    RegEnumKeyExW(ASIOKey, DriverIndex, DriverNames[DriverIndex], &DataSize, 0, 0, 0, 0);
 
     void* DriverKey = 0;
     RegOpenKeyExW(ASIOKey, DriverNames[DriverIndex], 0, ASIO_KEY_READ, &DriverKey);
@@ -321,6 +319,7 @@ void ASIOGetDriverInfo(u32 DriverCount,
   RegCloseKey(ASIOKey);
 }
 
+// NOTE(robin): Gets a pointer to the driver from the driver DLL
 void ASIOLoadDriver(asio_driver** Driver, wchar* ClassIDString, wchar* DllPath)
 {
   void* ASIODll = LoadLibraryW(DllPath);
@@ -481,6 +480,75 @@ asio_sample_format ASIOGetSampleFormat(asio_sample_type SampleType)
                SampleType == ASIOSampleTypeDSDInt8NER8;
 
   return Result;
+}
+
+// NOTE(robin): You may not wish to use this, it would be much better to
+// convert a block of samples in your format to a block of samples in the
+// hardware's format and then memcpy into the hardware buffer.  This function
+// is provided mostly for reference.
+//
+// ASIO drivers can expect data in a variety of formats, this function converts
+// from 64-bit float format to the hardware's native format and then writes the
+// converted sample to the hardware buffer.
+asio_error ASIOWriteSampleToHardwareBuffer(void* HardwareBuffer, s32 FrameIndex, f64 Sample, asio_sample_format Format)
+{
+  // NOTE(robin): DSD formats and packed sample formats are not supported yet
+  if (Format.DSD || Format.BitAlign || Format.BytesPerSample > 8)
+    return ASIOErrorInvalidParameter;
+
+  // NOTE(robin): We can have at most 8 bytes per sample
+  u8 SampleBytes[8] = {0};
+  u32 SampleByteCount = sizeof(SampleBytes) / sizeof(SampleBytes[0]);
+
+  if (Format.IsFloat)
+  {
+    switch (Format.BytesPerSample)
+    {
+      case sizeof(f32):
+      {
+        *(f32*)SampleBytes = (f32)Sample;
+      } break;
+
+      case sizeof(f64):
+      {
+        *(f64*)SampleBytes = Sample;
+      } break;
+
+      default:
+      {
+        return ASIOErrorInvalidParameter;
+      }
+    }
+  }
+  else // NOTE(robin): Integer sample format
+  {
+    s32 SampleMaxValue = (1 << (Format.BytesPerSample * 8 - 1)) - 1;
+    s32 IntegerSampleValue = (s32)(SampleMaxValue * Sample);
+
+    u8* IntegerSampleBytes = (u8*)&IntegerSampleValue;
+    for (u32 i = 0; i < Format.BytesPerSample; i++)
+      SampleBytes[i] = IntegerSampleBytes[i];
+  }
+
+  // NOTE(robin): Swap the bytes in SampleBytes if we're big endian
+  if (Format.IsBigEndian)
+  {
+    for (u64 i = 0; i < SampleByteCount / 2; i++)
+    {
+      u8 Temp = SampleBytes[i];
+      SampleBytes[i] = SampleBytes[SampleByteCount - 1 - i];
+      SampleBytes[SampleByteCount - 1 - i] = Temp;
+    }
+  }
+
+  u8* HardwareByteBuffer = (u8*)HardwareBuffer + FrameIndex * Format.BytesPerSample;
+
+  u32 Start = Format.IsBigEndian ? SampleByteCount - Format.BytesPerSample : 0;
+  u32 End = Format.IsBigEndian ? SampleByteCount : Format.BytesPerSample;
+  for (u32 i = Start; i < End; i++)
+    HardwareByteBuffer[i] = SampleBytes[i];
+
+  return ASIOErrorOK;
 }
 
 #pragma warning(pop)
