@@ -4,7 +4,7 @@
  *
  * IMPORTANT(robin): THIS FILE WILL NOT COMPILE ON ITS OWN!!!
  * It is expected that you #include this source file into another source file that already
- * has the neccessary WINAPI functions declared, by including Windows.h for example.
+ * has the necessary WINAPI functions declared, by including Windows.h for example.
  * Alternatively you can just copy and paste the contents of this file into your own codebase.
  *
  * We use the following WINAPI functions:
@@ -24,7 +24,7 @@
  *              f32, f64,         // float, double
  *              wchar             // 16-bit wide character
  *
- * NOTE(robin): The basic structure of intialising an ASIO driver on Windows is this:
+ * NOTE(robin): The basic structure of initialising an ASIO driver on Windows is this:
  *
  * - The Windows registry stores a list of the currently installed ASIO drivers.
  * - This list is queried to obtain the CLSID (ClassID) and DLL path of each driver.
