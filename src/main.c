@@ -250,8 +250,11 @@ int main(void)
 
   Sleep(3000);
 
+  // IMPORTANT(robin): You must call these 3 when your application terminates otherwise
+  // the user will have no audio!
   ASIODriver->VMT->Stop(ASIODriver);
   ASIODriver->VMT->DisposeBuffers(ASIODriver);
+  ASIODriver->VMT->Release(ASIODriver);
 
   return 0;
 }
